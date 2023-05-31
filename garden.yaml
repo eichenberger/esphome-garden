@@ -1,0 +1,141 @@
+esphome:
+  name: garden
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.partitions: "../../../partitions_custom.csv"
+  includes:
+    - a02yyuw.h
+  on_boot:
+    then:
+      - switch.turn_on: enable_sensors
+  on_shutdown:
+    then:
+      - switch.turn_off: enable_sensors
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+    version: recommended
+    # Custom sdkconfig options
+    sdkconfig_options:
+      CONFIG_COMPILER_OPTIMIZATION_SIZE: y
+
+logger:
+  level: DEBUG
+
+# Enable Home Assistant API
+api:
+  password: "pwd"
+
+ota:
+  password: "pwd"
+
+wifi:
+  ssid: "SSID"
+  password: "PASSWORD"
+
+switch:
+  - platform: gpio
+    id: water_pump
+    name: "Water Pump"
+    pin: 
+      number: 19
+    on_turn_on:
+      - delay: !lambda "return id(pump_time).state*1000;"
+      - switch.turn_off: water_pump
+  - platform: gpio
+    id: enable_sensors
+    name: "Enable Sensors"
+    pin: 
+      number: 18
+    restore_mode: ALWAYS_OFF
+  - platform: template
+    name: "Deep Sleep"
+    lambda: return false;
+    turn_on_action:
+      then:
+        - lambda: id(deep_sleep_1).set_sleep_duration(id(sleep_time).state*1000);
+        - deep_sleep.enter: deep_sleep_1
+
+uart:
+  - id: sensor_uart
+    rx_pin: 10
+    baud_rate: 9600
+
+sensor:
+  - platform: dht
+    model: AM2302
+    pin: 
+      number: 2
+      mode: 
+        pullup: true
+      drive_strength: 40mA
+    temperature:
+      name: "Garden Temperature"
+    humidity:
+      name: "Garden Humidity"
+    update_interval: 2s
+
+  - platform: adc
+    pin: 1
+    attenuation: auto
+    name: "Moisture"
+    update_interval: 1s
+    state_class: "measurement"
+    filters:
+      - lambda: if (id(enable_sensors).state) return x; else return {};
+      - median: 
+          window_size: 10
+          send_every: 5
+          send_first_at: 5
+
+  - platform: adc
+    pin: 3
+    attenuation: auto
+    name: "Battery"
+    update_interval: 1s
+    state_class: "measurement"
+    filters:
+      - lambda: return 2.45*x;
+      - median: 
+          window_size: 10
+          send_every: 5
+          send_first_at: 5
+
+  - platform: custom
+    lambda: |-
+        auto my_sensor = new A02YYUW(id(sensor_uart));
+        App.register_component(my_sensor);
+        return {my_sensor};
+    sensors:
+      name: "Tank Level"
+      unit_of_measurement: m
+      accuracy_decimals: 3
+      state_class: "measurement"
+
+number:
+  - platform: template
+    id: sleep_time
+    name: "Sleep Time"
+    unit_of_measurement: "s"
+    initial_value: 60
+    min_value: 10
+    step: 1
+    max_value: 86400
+    optimistic: true
+
+  - platform: template
+    id: pump_time
+    name: "Pump auto off time"
+    unit_of_measurement: "s"
+    initial_value: 10
+    min_value: 10
+    step: 1
+    max_value: 120
+    optimistic: true
+
+deep_sleep:
+  id: deep_sleep_1
+  sleep_duration: 60s
+
